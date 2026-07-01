@@ -9,8 +9,10 @@ use crate::ffi::hexrays::{
     idalib_hexrays_cfunc_call_edges, idalib_hexrays_cfunc_lvar_info,
     idalib_hexrays_cfunc_param_info, idalib_hexrays_cfunc_param_lvar_idx,
     idalib_hexrays_cfunc_pseudocode, idalib_hexrays_cfunc_target_calls,
-    idalib_hexrays_cfuncptr_inner, idalib_hexrays_i32_vec_get, idalib_hexrays_i32_vec_len,
-    idalib_hexrays_target_calls_get, idalib_hexrays_target_calls_len,
+    idalib_hexrays_cfunc_this_expressions, idalib_hexrays_cfuncptr_inner,
+    idalib_hexrays_i32_vec_get, idalib_hexrays_i32_vec_len, idalib_hexrays_target_calls_get,
+    idalib_hexrays_target_calls_len, idalib_hexrays_this_expressions_get,
+    idalib_hexrays_this_expressions_len,
 };
 use crate::idb::IDB;
 
@@ -98,6 +100,18 @@ pub struct TargetCall {
     pub target_arg_pos: i32,
     pub tracked_var_idx: i32,
     pub tracked_arg_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThisExpression {
+    pub func_ea: crate::Address,
+    pub expr_ea: crate::Address,
+    pub op: i32,
+    pub alias_idx: i32,
+    pub op_name: String,
+    pub kind: String,
+    pub text: String,
+    pub alias_text: String,
 }
 
 impl<'a> CFunction<'a> {
@@ -196,6 +210,27 @@ impl<'a> CFunction<'a> {
                 target_arg_pos: item.target_arg_pos,
                 tracked_var_idx: item.tracked_var_idx,
                 tracked_arg_text: item.tracked_arg_text,
+            })
+            .collect()
+    }
+
+    pub fn this_expressions(&self, aliases: &[i32]) -> Vec<ThisExpression> {
+        let items = unsafe { idalib_hexrays_cfunc_this_expressions(self.ptr, aliases) };
+        let Some(items) = items.as_ref() else {
+            return Vec::new();
+        };
+        let len = unsafe { idalib_hexrays_this_expressions_len(items) };
+        (0..len)
+            .map(|index| unsafe { idalib_hexrays_this_expressions_get(items, index) })
+            .map(|item| ThisExpression {
+                func_ea: item.func_ea,
+                expr_ea: item.expr_ea,
+                op: item.op,
+                alias_idx: item.alias_idx,
+                op_name: item.op_name,
+                kind: item.kind,
+                text: item.text,
+                alias_text: item.alias_text,
             })
             .collect()
     }

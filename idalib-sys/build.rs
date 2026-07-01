@@ -181,4 +181,23 @@ fn main() {
         "cargo::rerun-if-changed={}",
         ffi_path.join("lib.rs").display()
     );
+    for extra in [
+        "bookmarks_extras.h",
+        "bytes_extras.h",
+        "comments_extras.h",
+        "entry_extras.h",
+        "func_extras.h",
+        "hexrays_extras.h",
+        "idalib_extras.h",
+        "inf_extras.h",
+        "kernwin_extras.h",
+        "loader_extras.h",
+        "nalt_extras.h",
+        "ph_extras.h",
+        "segm_extras.h",
+        "search_extras.h",
+        "strings_extras.h",
+    ] {
+        println!("cargo::rerun-if-changed={}", ffi_path.join(extra).display());
+    }
 }

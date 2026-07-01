@@ -533,7 +533,8 @@ pub mod hexrays {
     pub use super::ffix::{
         cblock_iter, hexrays_assignment_t, hexrays_assignment_vec, hexrays_call_edge_t,
         hexrays_call_edge_vec, hexrays_i32_vec, hexrays_lvar_info_t, hexrays_target_call_t,
-        hexrays_target_call_vec, idalib_hexrays_assignments_get, idalib_hexrays_assignments_len,
+        hexrays_target_call_vec, hexrays_this_expr_t, hexrays_this_expr_vec,
+        idalib_hexrays_assignments_get, idalib_hexrays_assignments_len,
         idalib_hexrays_call_edges_get, idalib_hexrays_call_edges_len, idalib_hexrays_cblock_iter,
         idalib_hexrays_cblock_iter_next, idalib_hexrays_cblock_len,
         idalib_hexrays_cfunc_alias_param_positions, idalib_hexrays_cfunc_apply_lvar_info,
@@ -541,10 +542,11 @@ pub mod hexrays {
         idalib_hexrays_cfunc_call_edges, idalib_hexrays_cfunc_lvar_info,
         idalib_hexrays_cfunc_param_info, idalib_hexrays_cfunc_param_lvar_idx,
         idalib_hexrays_cfunc_pseudocode, idalib_hexrays_cfunc_target_calls,
-        idalib_hexrays_cfuncptr_inner, idalib_hexrays_decompile_func, idalib_hexrays_i32_vec_get,
-        idalib_hexrays_i32_vec_len, idalib_hexrays_target_calls_get,
-        idalib_hexrays_target_calls_len, idalib_named_type_exists, idalib_parse_decls_file,
-        idalib_save_database_with_backup,
+        idalib_hexrays_cfunc_this_expressions, idalib_hexrays_cfuncptr_inner,
+        idalib_hexrays_decompile_func, idalib_hexrays_i32_vec_get, idalib_hexrays_i32_vec_len,
+        idalib_hexrays_target_calls_get, idalib_hexrays_target_calls_len,
+        idalib_hexrays_this_expressions_get, idalib_hexrays_this_expressions_len,
+        idalib_named_type_exists, idalib_parse_decls_file, idalib_save_database_with_backup,
     };
 
     unsafe impl cxx::ExternType for cfunc_t {
@@ -764,6 +766,18 @@ mod ffix {
         tracked_arg_text: String,
     }
 
+    #[derive(Clone)]
+    struct hexrays_this_expr_t {
+        func_ea: u64,
+        expr_ea: u64,
+        op: i32,
+        alias_idx: i32,
+        op_name: String,
+        kind: String,
+        text: String,
+        alias_text: String,
+    }
+
     unsafe extern "C++" {
         include!("autocxxgen_ffi.h");
         include!("idalib.hpp");
@@ -814,6 +828,7 @@ mod ffix {
         type hexrays_assignment_vec;
         type hexrays_call_edge_vec;
         type hexrays_target_call_vec;
+        type hexrays_this_expr_vec;
         type hexrays_i32_vec;
 
         type plugin_t = super::ffi::plugin_t;
@@ -887,6 +902,18 @@ mod ffix {
             items: &hexrays_target_call_vec,
             index: usize,
         ) -> hexrays_target_call_t;
+
+        unsafe fn idalib_hexrays_cfunc_this_expressions(
+            f: *mut cfunc_t,
+            aliases: &[i32],
+        ) -> UniquePtr<hexrays_this_expr_vec>;
+        unsafe fn idalib_hexrays_this_expressions_len(
+            items: &hexrays_this_expr_vec,
+        ) -> usize;
+        unsafe fn idalib_hexrays_this_expressions_get(
+            items: &hexrays_this_expr_vec,
+            index: usize,
+        ) -> hexrays_this_expr_t;
 
         unsafe fn idalib_hexrays_cfunc_lvar_info(
             f: *mut cfunc_t,

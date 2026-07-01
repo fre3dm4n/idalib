@@ -84,9 +84,26 @@ struct hexrays_target_call_t final {
 };
 #endif // CXXBRIDGE1_STRUCT_hexrays_target_call_t
 
+#ifndef CXXBRIDGE1_STRUCT_hexrays_this_expr_t
+#define CXXBRIDGE1_STRUCT_hexrays_this_expr_t
+struct hexrays_this_expr_t final {
+  ::std::uint64_t func_ea;
+  ::std::uint64_t expr_ea;
+  ::std::int32_t op;
+  ::std::int32_t alias_idx;
+  rust::String op_name;
+  rust::String kind;
+  rust::String text;
+  rust::String alias_text;
+
+  using IsRelocatable = ::std::true_type;
+};
+#endif // CXXBRIDGE1_STRUCT_hexrays_this_expr_t
+
 using hexrays_assignment_vec = std::vector<hexrays_assignment_t>;
 using hexrays_call_edge_vec = std::vector<hexrays_call_edge_t>;
 using hexrays_target_call_vec = std::vector<hexrays_target_call_t>;
+using hexrays_this_expr_vec = std::vector<hexrays_this_expr_t>;
 using hexrays_i32_vec = std::vector<int32_t>;
 
 static inline bool idalib_hexrays_is_assignment_op(ctype_t op) {
@@ -138,6 +155,241 @@ static inline int idalib_hexrays_direct_var_idx(const cexpr_t *expr) {
     return expr->v.idx;
   }
   return -1;
+}
+
+static inline const char *idalib_hexrays_op_name(ctype_t op) {
+  switch (op) {
+  case cot_empty: return "cot_empty";
+  case cot_comma: return "cot_comma";
+  case cot_asg: return "cot_asg";
+  case cot_asgbor: return "cot_asgbor";
+  case cot_asgxor: return "cot_asgxor";
+  case cot_asgband: return "cot_asgband";
+  case cot_asgadd: return "cot_asgadd";
+  case cot_asgsub: return "cot_asgsub";
+  case cot_asgmul: return "cot_asgmul";
+  case cot_asgsshr: return "cot_asgsshr";
+  case cot_asgushr: return "cot_asgushr";
+  case cot_asgshl: return "cot_asgshl";
+  case cot_asgsdiv: return "cot_asgsdiv";
+  case cot_asgudiv: return "cot_asgudiv";
+  case cot_asgsmod: return "cot_asgsmod";
+  case cot_asgumod: return "cot_asgumod";
+  case cot_tern: return "cot_tern";
+  case cot_lor: return "cot_lor";
+  case cot_land: return "cot_land";
+  case cot_bor: return "cot_bor";
+  case cot_xor: return "cot_xor";
+  case cot_band: return "cot_band";
+  case cot_eq: return "cot_eq";
+  case cot_ne: return "cot_ne";
+  case cot_sge: return "cot_sge";
+  case cot_uge: return "cot_uge";
+  case cot_sle: return "cot_sle";
+  case cot_ule: return "cot_ule";
+  case cot_sgt: return "cot_sgt";
+  case cot_ugt: return "cot_ugt";
+  case cot_slt: return "cot_slt";
+  case cot_ult: return "cot_ult";
+  case cot_sshr: return "cot_sshr";
+  case cot_ushr: return "cot_ushr";
+  case cot_shl: return "cot_shl";
+  case cot_add: return "cot_add";
+  case cot_sub: return "cot_sub";
+  case cot_mul: return "cot_mul";
+  case cot_sdiv: return "cot_sdiv";
+  case cot_udiv: return "cot_udiv";
+  case cot_smod: return "cot_smod";
+  case cot_umod: return "cot_umod";
+  case cot_fadd: return "cot_fadd";
+  case cot_fsub: return "cot_fsub";
+  case cot_fmul: return "cot_fmul";
+  case cot_fdiv: return "cot_fdiv";
+  case cot_fneg: return "cot_fneg";
+  case cot_neg: return "cot_neg";
+  case cot_cast: return "cot_cast";
+  case cot_lnot: return "cot_lnot";
+  case cot_bnot: return "cot_bnot";
+  case cot_ptr: return "cot_ptr";
+  case cot_ref: return "cot_ref";
+  case cot_postinc: return "cot_postinc";
+  case cot_postdec: return "cot_postdec";
+  case cot_preinc: return "cot_preinc";
+  case cot_predec: return "cot_predec";
+  case cot_call: return "cot_call";
+  case cot_idx: return "cot_idx";
+  case cot_memref: return "cot_memref";
+  case cot_memptr: return "cot_memptr";
+  case cot_num: return "cot_num";
+  case cot_fnum: return "cot_fnum";
+  case cot_str: return "cot_str";
+  case cot_obj: return "cot_obj";
+  case cot_var: return "cot_var";
+  case cot_insn: return "cot_insn";
+  case cot_sizeof: return "cot_sizeof";
+  case cot_helper: return "cot_helper";
+  case cot_type: return "cot_type";
+  default: return "cot_unknown";
+  }
+}
+
+static bool idalib_hexrays_expr_find_alias(const cexpr_t *expr,
+                                           const std::set<int> *aliases,
+                                           const cexpr_t **alias_expr,
+                                           int *alias_idx) {
+  if (expr == nullptr) {
+    return false;
+  }
+
+  if (expr->op == cot_var && aliases->find(expr->v.idx) != aliases->end()) {
+    if (alias_expr != nullptr) {
+      *alias_expr = expr;
+    }
+    if (alias_idx != nullptr) {
+      *alias_idx = expr->v.idx;
+    }
+    return true;
+  }
+
+  if (op_uses_x(expr->op) &&
+      idalib_hexrays_expr_find_alias(expr->x, aliases, alias_expr, alias_idx)) {
+    return true;
+  }
+  if (expr->op == cot_call && expr->a != nullptr) {
+    for (const carg_t &arg : *expr->a) {
+      if (idalib_hexrays_expr_find_alias(&arg, aliases, alias_expr, alias_idx)) {
+        return true;
+      }
+    }
+  }
+  if (op_uses_y(expr->op)) {
+    if (idalib_hexrays_expr_find_alias(expr->y, aliases, alias_expr, alias_idx)) {
+      return true;
+    }
+  }
+  if (op_uses_z(expr->op) &&
+      idalib_hexrays_expr_find_alias(expr->z, aliases, alias_expr, alias_idx)) {
+    return true;
+  }
+
+  return false;
+}
+
+static inline bool idalib_hexrays_direct_alias_expr(const cexpr_t *expr,
+                                                    const std::set<int> *aliases) {
+  int idx = idalib_hexrays_direct_var_idx(expr);
+  return idx >= 0 && aliases->find(idx) != aliases->end();
+}
+
+static bool idalib_hexrays_expr_has_direct_alias_operand(
+    const cexpr_t *expr, const std::set<int> *aliases) {
+  if (expr == nullptr) {
+    return false;
+  }
+  if (op_uses_x(expr->op) && idalib_hexrays_direct_alias_expr(expr->x, aliases)) {
+    return true;
+  }
+  if (expr->op == cot_call && expr->a != nullptr) {
+    for (const carg_t &arg : *expr->a) {
+      if (idalib_hexrays_direct_alias_expr(&arg, aliases)) {
+        return true;
+      }
+    }
+  }
+  if (op_uses_y(expr->op)) {
+    if (idalib_hexrays_direct_alias_expr(expr->y, aliases)) {
+      return true;
+    }
+  }
+  if (op_uses_z(expr->op) && idalib_hexrays_direct_alias_expr(expr->z, aliases)) {
+    return true;
+  }
+  return false;
+}
+
+static bool idalib_hexrays_expr_find_alias_field_access(
+    const cexpr_t *expr, const std::set<int> *aliases,
+    const cexpr_t **alias_expr, int *alias_idx) {
+  if (expr == nullptr) {
+    return false;
+  }
+
+  if ((expr->op == cot_memptr || expr->op == cot_memref) &&
+      idalib_hexrays_expr_find_alias(expr->x, aliases, alias_expr, alias_idx)) {
+    return true;
+  }
+  if ((expr->op == cot_ptr || expr->op == cot_idx) &&
+      idalib_hexrays_expr_find_alias(expr->x, aliases, alias_expr, alias_idx)) {
+    return true;
+  }
+
+  if (op_uses_x(expr->op) &&
+      idalib_hexrays_expr_find_alias_field_access(expr->x, aliases, alias_expr, alias_idx)) {
+    return true;
+  }
+  if (expr->op == cot_call && expr->a != nullptr) {
+    for (const carg_t &arg : *expr->a) {
+      if (idalib_hexrays_expr_find_alias_field_access(&arg, aliases, alias_expr, alias_idx)) {
+        return true;
+      }
+    }
+  }
+  if (op_uses_y(expr->op) &&
+      idalib_hexrays_expr_find_alias_field_access(expr->y, aliases, alias_expr, alias_idx)) {
+    return true;
+  }
+  if (op_uses_z(expr->op) &&
+      idalib_hexrays_expr_find_alias_field_access(expr->z, aliases, alias_expr, alias_idx)) {
+    return true;
+  }
+
+  return false;
+}
+
+static rust::String idalib_hexrays_this_expr_kind(const cexpr_t *expr,
+                                                  const std::set<int> *aliases) {
+  if (expr == nullptr) {
+    return rust::String("unknown");
+  }
+
+  if (expr->op == cot_var && aliases->find(expr->v.idx) != aliases->end()) {
+    return rust::String("alias");
+  }
+  if (idalib_hexrays_is_assignment_op(expr->op)) {
+    if (idalib_hexrays_expr_find_alias(expr->x, aliases, nullptr, nullptr)) {
+      return rust::String("assignment-write");
+    }
+    return rust::String("assignment-read");
+  }
+  if (expr->op == cot_memptr || expr->op == cot_memref) {
+    return rust::String("member-access");
+  }
+  if (expr->op == cot_ptr) {
+    return rust::String("deref");
+  }
+  if (expr->op == cot_ref) {
+    return rust::String("address-of");
+  }
+  if (expr->op == cot_idx) {
+    return rust::String("index");
+  }
+  if (expr->op == cot_call) {
+    if (expr->x != nullptr && idalib_hexrays_expr_find_alias(expr->x, aliases, nullptr, nullptr)) {
+      return rust::String("call-target");
+    }
+    return rust::String("call-argument");
+  }
+  if (expr->op == cot_add || expr->op == cot_sub ||
+      expr->op == cot_asgadd || expr->op == cot_asgsub) {
+    return rust::String("pointer-arithmetic");
+  }
+  if (is_prepost(expr->op)) {
+    return rust::String("mutation");
+  }
+  if (idalib_hexrays_expr_has_direct_alias_operand(expr, aliases)) {
+    return rust::String("direct-use");
+  }
+  return rust::String("containing");
 }
 
 static void idalib_hexrays_collect_call_if_matches(
@@ -274,6 +526,38 @@ struct idalib_target_call_collector_t : public ctree_visitor_t {
   }
 };
 
+struct idalib_this_expr_collector_t : public ctree_visitor_t {
+  const cfunc_t *func;
+  const std::set<int> *aliases;
+  std::vector<hexrays_this_expr_t> *out;
+
+  idalib_this_expr_collector_t(const cfunc_t *_func,
+                               const std::set<int> *_aliases,
+                               std::vector<hexrays_this_expr_t> *_out)
+      : ctree_visitor_t(CV_FAST), func(_func), aliases(_aliases), out(_out) {}
+
+  int idaapi visit_expr(cexpr_t *expr) override {
+    const cexpr_t *alias_expr = nullptr;
+    int alias_idx = -1;
+    if (expr == nullptr ||
+        !idalib_hexrays_expr_find_alias_field_access(expr, aliases, &alias_expr, &alias_idx)) {
+      return 0;
+    }
+
+    out->push_back(hexrays_this_expr_t{
+        func->entry_ea,
+        expr->ea,
+        int32_t(expr->op),
+        int32_t(alias_idx),
+        rust::String(idalib_hexrays_op_name(expr->op)),
+        idalib_hexrays_this_expr_kind(expr, aliases),
+        idalib_hexrays_item_text(expr, func),
+        alias_expr != nullptr ? idalib_hexrays_item_text(alias_expr, func) : rust::String(),
+    });
+    return 0;
+  }
+};
+
 std::unique_ptr<hexrays_assignment_vec>
 idalib_hexrays_cfunc_assignments(cfunc_t *f) {
   auto out = std::make_unique<hexrays_assignment_vec>();
@@ -305,6 +589,18 @@ idalib_hexrays_cfunc_target_calls(cfunc_t *f, uint64_t target_ea,
   return out;
 }
 
+std::unique_ptr<hexrays_this_expr_vec>
+idalib_hexrays_cfunc_this_expressions(cfunc_t *f, rust::Slice<const int32_t> aliases) {
+  auto out = std::make_unique<hexrays_this_expr_vec>();
+  std::set<int> alias_set;
+  for (int32_t alias : aliases) {
+    alias_set.insert(alias);
+  }
+  idalib_this_expr_collector_t visitor(f, &alias_set, out.get());
+  visitor.apply_to(&f->body, nullptr);
+  return out;
+}
+
 std::size_t idalib_hexrays_assignments_len(
     const hexrays_assignment_vec &items) {
   return items.size();
@@ -332,6 +628,16 @@ std::size_t idalib_hexrays_target_calls_len(
 
 hexrays_target_call_t idalib_hexrays_target_calls_get(
     const hexrays_target_call_vec &items, std::size_t index) {
+  return items.at(index);
+}
+
+std::size_t idalib_hexrays_this_expressions_len(
+    const hexrays_this_expr_vec &items) {
+  return items.size();
+}
+
+hexrays_this_expr_t idalib_hexrays_this_expressions_get(
+    const hexrays_this_expr_vec &items, std::size_t index) {
   return items.at(index);
 }
 
