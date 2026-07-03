@@ -6,13 +6,14 @@ use crate::ffi::hexrays::{
     idalib_hexrays_cblock_iter, idalib_hexrays_cblock_iter_next, idalib_hexrays_cblock_len,
     idalib_hexrays_cfunc_alias_param_positions, idalib_hexrays_cfunc_apply_lvar_info,
     idalib_hexrays_cfunc_apply_param_info, idalib_hexrays_cfunc_assignments,
-    idalib_hexrays_cfunc_call_edges, idalib_hexrays_cfunc_lvar_info,
-    idalib_hexrays_cfunc_param_info, idalib_hexrays_cfunc_param_lvar_idx,
-    idalib_hexrays_cfunc_pseudocode, idalib_hexrays_cfunc_target_calls,
-    idalib_hexrays_cfunc_this_expressions, idalib_hexrays_cfuncptr_inner,
-    idalib_hexrays_i32_vec_get, idalib_hexrays_i32_vec_len, idalib_hexrays_target_calls_get,
-    idalib_hexrays_target_calls_len, idalib_hexrays_this_expressions_get,
-    idalib_hexrays_this_expressions_len,
+    idalib_hexrays_cfunc_call_edges, idalib_hexrays_cfunc_fixed_accesses,
+    idalib_hexrays_cfunc_lvar_info, idalib_hexrays_cfunc_param_info,
+    idalib_hexrays_cfunc_param_lvar_idx, idalib_hexrays_cfunc_pseudocode,
+    idalib_hexrays_cfunc_target_calls, idalib_hexrays_cfunc_this_expressions,
+    idalib_hexrays_cfuncptr_inner, idalib_hexrays_fixed_accesses_get,
+    idalib_hexrays_fixed_accesses_len, idalib_hexrays_i32_vec_get, idalib_hexrays_i32_vec_len,
+    idalib_hexrays_target_calls_get, idalib_hexrays_target_calls_len,
+    idalib_hexrays_this_expressions_get, idalib_hexrays_this_expressions_len,
 };
 use crate::idb::IDB;
 
@@ -20,6 +21,10 @@ pub use crate::ffi::hexrays::{HexRaysError, HexRaysErrorCode};
 
 pub fn parse_decls_file(path: &str) -> i32 {
     unsafe { crate::ffi::hexrays::idalib_parse_decls_file(path) }
+}
+
+pub fn parse_decls_file_with_clang(path: &str, argv: &str) -> i32 {
+    unsafe { crate::ffi::hexrays::idalib_parse_decls_file_with_clang(path, argv) }
 }
 
 pub fn named_type_exists(name: &str) -> bool {
@@ -112,6 +117,28 @@ pub struct ThisExpression {
     pub kind: String,
     pub text: String,
     pub alias_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixedAccess {
+    pub func_ea: crate::Address,
+    pub expr_ea: crate::Address,
+    pub op: i32,
+    pub op_name: String,
+    pub kind: String,
+    pub access: String,
+    pub base_lvar_idx: i32,
+    pub base_name: String,
+    pub base_type: String,
+    pub offset: u64,
+    pub width: Option<i32>,
+    pub text: String,
+    pub rhs_base_lvar_idx: Option<i32>,
+    pub rhs_base_name: String,
+    pub rhs_base_type: String,
+    pub rhs_offset: Option<u64>,
+    pub rhs_width: Option<i32>,
+    pub rhs_text: String,
 }
 
 impl<'a> CFunction<'a> {
@@ -231,6 +258,37 @@ impl<'a> CFunction<'a> {
                 kind: item.kind,
                 text: item.text,
                 alias_text: item.alias_text,
+            })
+            .collect()
+    }
+
+    pub fn fixed_accesses(&self) -> Vec<FixedAccess> {
+        let items = unsafe { idalib_hexrays_cfunc_fixed_accesses(self.ptr) };
+        let Some(items) = items.as_ref() else {
+            return Vec::new();
+        };
+        let len = unsafe { idalib_hexrays_fixed_accesses_len(items) };
+        (0..len)
+            .map(|index| unsafe { idalib_hexrays_fixed_accesses_get(items, index) })
+            .map(|item| FixedAccess {
+                func_ea: item.func_ea,
+                expr_ea: item.expr_ea,
+                op: item.op,
+                op_name: item.op_name,
+                kind: item.kind,
+                access: item.access,
+                base_lvar_idx: item.base_lvar_idx,
+                base_name: item.base_name,
+                base_type: item.base_type,
+                offset: item.offset,
+                width: (item.width >= 0).then_some(item.width),
+                text: item.text,
+                rhs_base_lvar_idx: (item.rhs_base_lvar_idx >= 0).then_some(item.rhs_base_lvar_idx),
+                rhs_base_name: item.rhs_base_name,
+                rhs_base_type: item.rhs_base_type,
+                rhs_offset: (item.rhs_base_lvar_idx >= 0).then_some(item.rhs_offset),
+                rhs_width: (item.rhs_width >= 0).then_some(item.rhs_width),
+                rhs_text: item.rhs_text,
             })
             .collect()
     }

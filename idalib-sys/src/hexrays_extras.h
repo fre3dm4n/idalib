@@ -5,6 +5,7 @@
 #include "lines.hpp"
 #include "loader.hpp"
 #include "pro.h"
+#include "srclang.hpp"
 #include "typeinf.hpp"
 
 #include <cstdint>
@@ -100,10 +101,37 @@ struct hexrays_this_expr_t final {
 };
 #endif // CXXBRIDGE1_STRUCT_hexrays_this_expr_t
 
+#ifndef CXXBRIDGE1_STRUCT_hexrays_fixed_access_t
+#define CXXBRIDGE1_STRUCT_hexrays_fixed_access_t
+struct hexrays_fixed_access_t final {
+  ::std::uint64_t func_ea;
+  ::std::uint64_t expr_ea;
+  ::std::int32_t op;
+  rust::String op_name;
+  rust::String kind;
+  rust::String access;
+  ::std::int32_t base_lvar_idx;
+  rust::String base_name;
+  rust::String base_type;
+  ::std::uint64_t offset;
+  ::std::int32_t width;
+  rust::String text;
+  ::std::int32_t rhs_base_lvar_idx;
+  rust::String rhs_base_name;
+  rust::String rhs_base_type;
+  ::std::uint64_t rhs_offset;
+  ::std::int32_t rhs_width;
+  rust::String rhs_text;
+
+  using IsRelocatable = ::std::true_type;
+};
+#endif // CXXBRIDGE1_STRUCT_hexrays_fixed_access_t
+
 using hexrays_assignment_vec = std::vector<hexrays_assignment_t>;
 using hexrays_call_edge_vec = std::vector<hexrays_call_edge_t>;
 using hexrays_target_call_vec = std::vector<hexrays_target_call_t>;
 using hexrays_this_expr_vec = std::vector<hexrays_this_expr_t>;
+using hexrays_fixed_access_vec = std::vector<hexrays_fixed_access_t>;
 using hexrays_i32_vec = std::vector<int32_t>;
 
 static inline bool idalib_hexrays_is_assignment_op(ctype_t op) {
@@ -151,6 +179,14 @@ static inline cexpr_t *idalib_hexrays_unwrap_value_expr(cexpr_t *expr,
 
 static inline int idalib_hexrays_direct_var_idx(const cexpr_t *expr) {
   expr = idalib_hexrays_unwrap_value_expr_const(expr, true);
+  if (expr != nullptr && expr->op == cot_var) {
+    return expr->v.idx;
+  }
+  return -1;
+}
+
+static inline int idalib_hexrays_direct_var_idx_any(const cexpr_t *expr) {
+  expr = idalib_hexrays_unwrap_value_expr_const(expr, false);
   if (expr != nullptr && expr->op == cot_var) {
     return expr->v.idx;
   }
@@ -460,6 +496,172 @@ static void idalib_hexrays_collect_target_call_if_matches(
   });
 }
 
+struct idalib_fixed_access_info_t {
+  int base_lvar_idx = -1;
+  uint64 offset = 0;
+  int width = -1;
+  bool valid = false;
+};
+
+static hexrays_lvar_info_t idalib_hexrays_lvar_info_by_idx(
+    const cfunc_t *func, int32_t index) {
+  lvars_t *lvars = const_cast<cfunc_t *>(func)->get_lvars();
+  if (lvars == nullptr || index < 0 || size_t(index) >= lvars->size()) {
+    return hexrays_lvar_info_t{-1, rust::String(), rust::String(), false};
+  }
+  lvar_t &lvar = lvars->at(size_t(index));
+  return hexrays_lvar_info_t{
+      index,
+      rust::String(lvar.name.c_str()),
+      rust::String(lvar.type().dstr()),
+      true,
+  };
+}
+
+static int idalib_hexrays_positive_expr_size(const cexpr_t *expr) {
+  int size = idalib_hexrays_expr_size(expr);
+  return size > 0 ? size : -1;
+}
+
+static bool idalib_hexrays_const_u64(const cexpr_t *expr, uint64 *out) {
+  expr = idalib_hexrays_unwrap_value_expr_const(expr, false);
+  if (expr == nullptr || expr->op != cot_num) {
+    return false;
+  }
+  if (out != nullptr) {
+    *out = expr->numval();
+  }
+  return true;
+}
+
+static idalib_fixed_access_info_t idalib_hexrays_normalize_base_offset(
+    const cexpr_t *expr, int width_hint) {
+  idalib_fixed_access_info_t out;
+  expr = idalib_hexrays_unwrap_value_expr_const(expr, false);
+  if (expr == nullptr) {
+    return out;
+  }
+
+  if (expr->op == cot_var) {
+    out.base_lvar_idx = expr->v.idx;
+    out.offset = 0;
+    out.width = width_hint;
+    out.valid = true;
+    return out;
+  }
+
+  if (expr->op == cot_add || expr->op == cot_sub) {
+    uint64 value = 0;
+    auto left = idalib_hexrays_normalize_base_offset(expr->x, width_hint);
+    if (left.valid && idalib_hexrays_const_u64(expr->y, &value)) {
+      left.offset = expr->op == cot_sub ? left.offset - value : left.offset + value;
+      return left;
+    }
+
+    if (expr->op == cot_add && idalib_hexrays_const_u64(expr->x, &value)) {
+      auto right = idalib_hexrays_normalize_base_offset(expr->y, width_hint);
+      if (right.valid) {
+        right.offset += value;
+        return right;
+      }
+    }
+  }
+
+  if (expr->op == cot_idx) {
+    uint64 index = 0;
+    auto base = idalib_hexrays_normalize_base_offset(expr->x, width_hint);
+    int elem_size = idalib_hexrays_positive_expr_size(expr);
+    if (base.valid && elem_size > 0 && idalib_hexrays_const_u64(expr->y, &index)) {
+      base.offset += index * uint64(elem_size);
+      base.width = elem_size;
+      return base;
+    }
+  }
+
+  if (expr->op == cot_memptr || expr->op == cot_memref) {
+    int width = expr->op == cot_memptr ? expr->ptrsize : idalib_hexrays_positive_expr_size(expr);
+    auto base = idalib_hexrays_normalize_base_offset(expr->x, width);
+    if (base.valid) {
+      base.offset += expr->m;
+      base.width = width;
+      return base;
+    }
+  }
+
+  return out;
+}
+
+static idalib_fixed_access_info_t idalib_hexrays_normalize_fixed_access(
+    const cexpr_t *expr) {
+  idalib_fixed_access_info_t out;
+  expr = idalib_hexrays_unwrap_value_expr_const(expr, false);
+  if (expr == nullptr) {
+    return out;
+  }
+
+  if (expr->op == cot_ptr) {
+    out = idalib_hexrays_normalize_base_offset(expr->x, expr->ptrsize);
+    out.width = expr->ptrsize;
+    return out;
+  }
+
+  if (expr->op == cot_memptr || expr->op == cot_memref) {
+    int width = expr->op == cot_memptr ? expr->ptrsize : idalib_hexrays_positive_expr_size(expr);
+    out = idalib_hexrays_normalize_base_offset(expr->x, width);
+    if (out.valid) {
+      out.offset += expr->m;
+      out.width = width;
+    }
+    return out;
+  }
+
+  if (expr->op == cot_idx) {
+    uint64 index = 0;
+    int elem_size = idalib_hexrays_positive_expr_size(expr);
+    out = idalib_hexrays_normalize_base_offset(expr->x, elem_size);
+    if (out.valid && elem_size > 0 && idalib_hexrays_const_u64(expr->y, &index)) {
+      out.offset += index * uint64(elem_size);
+      out.width = elem_size;
+    } else {
+      out.valid = false;
+    }
+    return out;
+  }
+
+  return out;
+}
+
+static hexrays_fixed_access_t idalib_hexrays_make_fixed_access(
+    const cfunc_t *func, const cexpr_t *expr, const idalib_fixed_access_info_t &access,
+    const char *kind, const char *access_kind, const cexpr_t *text_expr,
+    const idalib_fixed_access_info_t *rhs, const cexpr_t *rhs_expr) {
+  hexrays_lvar_info_t base = idalib_hexrays_lvar_info_by_idx(func, access.base_lvar_idx);
+  hexrays_lvar_info_t rhs_base =
+      rhs != nullptr ? idalib_hexrays_lvar_info_by_idx(func, rhs->base_lvar_idx)
+                     : hexrays_lvar_info_t{-1, rust::String(), rust::String(), false};
+
+  return hexrays_fixed_access_t{
+      func->entry_ea,
+      expr != nullptr ? expr->ea : BADADDR,
+      expr != nullptr ? int32_t(expr->op) : -1,
+      expr != nullptr ? rust::String(idalib_hexrays_op_name(expr->op)) : rust::String(),
+      rust::String(kind),
+      rust::String(access_kind),
+      int32_t(access.base_lvar_idx),
+      base.valid ? base.name : rust::String(),
+      base.valid ? base.type_ : rust::String(),
+      access.offset,
+      int32_t(access.width),
+      text_expr != nullptr ? idalib_hexrays_item_text(text_expr, func) : rust::String(),
+      rhs != nullptr ? int32_t(rhs->base_lvar_idx) : int32_t(-1),
+      rhs_base.valid ? rhs_base.name : rust::String(),
+      rhs_base.valid ? rhs_base.type_ : rust::String(),
+      rhs != nullptr ? rhs->offset : uint64(0),
+      rhs != nullptr ? int32_t(rhs->width) : int32_t(-1),
+      rhs_expr != nullptr ? idalib_hexrays_item_text(rhs_expr, func) : rust::String(),
+  };
+}
+
 struct idalib_assignment_collector_t : public ctree_visitor_t {
   std::vector<hexrays_assignment_t> *out;
 
@@ -558,6 +760,50 @@ struct idalib_this_expr_collector_t : public ctree_visitor_t {
   }
 };
 
+struct idalib_fixed_access_collector_t : public ctree_visitor_t {
+  const cfunc_t *func;
+  std::vector<hexrays_fixed_access_t> *out;
+
+  idalib_fixed_access_collector_t(const cfunc_t *_func,
+                                  std::vector<hexrays_fixed_access_t> *_out)
+      : ctree_visitor_t(CV_FAST), func(_func), out(_out) {}
+
+  int idaapi visit_expr(cexpr_t *expr) override {
+    if (expr == nullptr) {
+      return 0;
+    }
+
+    if (idalib_hexrays_is_assignment_op(expr->op)) {
+      auto lhs = idalib_hexrays_normalize_fixed_access(expr->x);
+      auto rhs = idalib_hexrays_normalize_fixed_access(expr->y);
+      if (lhs.valid) {
+        out->push_back(idalib_hexrays_make_fixed_access(
+            func,
+            expr,
+            lhs,
+            rhs.valid ? "field_copy" : "fixed_offset_access",
+            "write",
+            expr,
+            rhs.valid ? &rhs : nullptr,
+            rhs.valid ? expr->y : nullptr));
+      }
+      if (rhs.valid && !lhs.valid) {
+        out->push_back(idalib_hexrays_make_fixed_access(
+            func, expr->y, rhs, "fixed_offset_access", "read", expr->y, nullptr, nullptr));
+      }
+      prune_now();
+      return 0;
+    }
+
+    auto access = idalib_hexrays_normalize_fixed_access(expr);
+    if (access.valid) {
+      out->push_back(idalib_hexrays_make_fixed_access(
+          func, expr, access, "fixed_offset_access", "read", expr, nullptr, nullptr));
+    }
+    return 0;
+  }
+};
+
 std::unique_ptr<hexrays_assignment_vec>
 idalib_hexrays_cfunc_assignments(cfunc_t *f) {
   auto out = std::make_unique<hexrays_assignment_vec>();
@@ -601,6 +847,14 @@ idalib_hexrays_cfunc_this_expressions(cfunc_t *f, rust::Slice<const int32_t> ali
   return out;
 }
 
+std::unique_ptr<hexrays_fixed_access_vec>
+idalib_hexrays_cfunc_fixed_accesses(cfunc_t *f) {
+  auto out = std::make_unique<hexrays_fixed_access_vec>();
+  idalib_fixed_access_collector_t visitor(f, out.get());
+  visitor.apply_to(&f->body, nullptr);
+  return out;
+}
+
 std::size_t idalib_hexrays_assignments_len(
     const hexrays_assignment_vec &items) {
   return items.size();
@@ -638,6 +892,16 @@ std::size_t idalib_hexrays_this_expressions_len(
 
 hexrays_this_expr_t idalib_hexrays_this_expressions_get(
     const hexrays_this_expr_vec &items, std::size_t index) {
+  return items.at(index);
+}
+
+std::size_t idalib_hexrays_fixed_accesses_len(
+    const hexrays_fixed_access_vec &items) {
+  return items.size();
+}
+
+hexrays_fixed_access_t idalib_hexrays_fixed_accesses_get(
+    const hexrays_fixed_access_vec &items, std::size_t index) {
   return items.at(index);
 }
 
@@ -757,6 +1021,16 @@ int32_t idalib_parse_decls_file(rust::Str path) {
   std::string path_string(path);
   return parse_decls(get_idati(), path_string.c_str(), nullptr,
                      HTI_FIL | HTI_DCL | HTI_NDC);
+}
+
+int32_t idalib_parse_decls_file_with_clang(rust::Str path, rust::Str argv) {
+  std::string path_string(path);
+  std::string argv_string(argv);
+  int32_t argv_result = set_parser_argv("clang", argv_string.c_str());
+  if (argv_result != 0) {
+    return argv_result;
+  }
+  return parse_decls_with_parser("clang", get_idati(), path_string.c_str(), true);
 }
 
 bool idalib_named_type_exists(rust::Str name) {

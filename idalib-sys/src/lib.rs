@@ -532,21 +532,23 @@ pub mod hexrays {
     };
     pub use super::ffix::{
         cblock_iter, hexrays_assignment_t, hexrays_assignment_vec, hexrays_call_edge_t,
-        hexrays_call_edge_vec, hexrays_i32_vec, hexrays_lvar_info_t, hexrays_target_call_t,
-        hexrays_target_call_vec, hexrays_this_expr_t, hexrays_this_expr_vec,
-        idalib_hexrays_assignments_get, idalib_hexrays_assignments_len,
+        hexrays_call_edge_vec, hexrays_fixed_access_t, hexrays_fixed_access_vec, hexrays_i32_vec,
+        hexrays_lvar_info_t, hexrays_target_call_t, hexrays_target_call_vec, hexrays_this_expr_t,
+        hexrays_this_expr_vec, idalib_hexrays_assignments_get, idalib_hexrays_assignments_len,
         idalib_hexrays_call_edges_get, idalib_hexrays_call_edges_len, idalib_hexrays_cblock_iter,
         idalib_hexrays_cblock_iter_next, idalib_hexrays_cblock_len,
         idalib_hexrays_cfunc_alias_param_positions, idalib_hexrays_cfunc_apply_lvar_info,
         idalib_hexrays_cfunc_apply_param_info, idalib_hexrays_cfunc_assignments,
-        idalib_hexrays_cfunc_call_edges, idalib_hexrays_cfunc_lvar_info,
-        idalib_hexrays_cfunc_param_info, idalib_hexrays_cfunc_param_lvar_idx,
-        idalib_hexrays_cfunc_pseudocode, idalib_hexrays_cfunc_target_calls,
-        idalib_hexrays_cfunc_this_expressions, idalib_hexrays_cfuncptr_inner,
-        idalib_hexrays_decompile_func, idalib_hexrays_i32_vec_get, idalib_hexrays_i32_vec_len,
-        idalib_hexrays_target_calls_get, idalib_hexrays_target_calls_len,
-        idalib_hexrays_this_expressions_get, idalib_hexrays_this_expressions_len,
-        idalib_named_type_exists, idalib_parse_decls_file, idalib_save_database_with_backup,
+        idalib_hexrays_cfunc_call_edges, idalib_hexrays_cfunc_fixed_accesses,
+        idalib_hexrays_cfunc_lvar_info, idalib_hexrays_cfunc_param_info,
+        idalib_hexrays_cfunc_param_lvar_idx, idalib_hexrays_cfunc_pseudocode,
+        idalib_hexrays_cfunc_target_calls, idalib_hexrays_cfunc_this_expressions,
+        idalib_hexrays_cfuncptr_inner, idalib_hexrays_decompile_func,
+        idalib_hexrays_fixed_accesses_get, idalib_hexrays_fixed_accesses_len,
+        idalib_hexrays_i32_vec_get, idalib_hexrays_i32_vec_len, idalib_hexrays_target_calls_get,
+        idalib_hexrays_target_calls_len, idalib_hexrays_this_expressions_get,
+        idalib_hexrays_this_expressions_len, idalib_named_type_exists, idalib_parse_decls_file,
+        idalib_parse_decls_file_with_clang, idalib_save_database_with_backup,
     };
 
     unsafe impl cxx::ExternType for cfunc_t {
@@ -778,6 +780,28 @@ mod ffix {
         alias_text: String,
     }
 
+    #[derive(Clone)]
+    struct hexrays_fixed_access_t {
+        func_ea: u64,
+        expr_ea: u64,
+        op: i32,
+        op_name: String,
+        kind: String,
+        access: String,
+        base_lvar_idx: i32,
+        base_name: String,
+        base_type: String,
+        offset: u64,
+        width: i32,
+        text: String,
+        rhs_base_lvar_idx: i32,
+        rhs_base_name: String,
+        rhs_base_type: String,
+        rhs_offset: u64,
+        rhs_width: i32,
+        rhs_text: String,
+    }
+
     unsafe extern "C++" {
         include!("autocxxgen_ffi.h");
         include!("idalib.hpp");
@@ -794,6 +818,7 @@ mod ffix {
         include!("kernwin_extras.h");
         include!("loader_extras.h");
         include!("nalt_extras.h");
+        include!("name_extras.h");
         include!("ph_extras.h");
         include!("segm_extras.h");
         include!("search_extras.h");
@@ -829,6 +854,7 @@ mod ffix {
         type hexrays_call_edge_vec;
         type hexrays_target_call_vec;
         type hexrays_this_expr_vec;
+        type hexrays_fixed_access_vec;
         type hexrays_i32_vec;
 
         type plugin_t = super::ffi::plugin_t;
@@ -907,13 +933,20 @@ mod ffix {
             f: *mut cfunc_t,
             aliases: &[i32],
         ) -> UniquePtr<hexrays_this_expr_vec>;
-        unsafe fn idalib_hexrays_this_expressions_len(
-            items: &hexrays_this_expr_vec,
-        ) -> usize;
+        unsafe fn idalib_hexrays_this_expressions_len(items: &hexrays_this_expr_vec) -> usize;
         unsafe fn idalib_hexrays_this_expressions_get(
             items: &hexrays_this_expr_vec,
             index: usize,
         ) -> hexrays_this_expr_t;
+
+        unsafe fn idalib_hexrays_cfunc_fixed_accesses(
+            f: *mut cfunc_t,
+        ) -> UniquePtr<hexrays_fixed_access_vec>;
+        unsafe fn idalib_hexrays_fixed_accesses_len(items: &hexrays_fixed_access_vec) -> usize;
+        unsafe fn idalib_hexrays_fixed_accesses_get(
+            items: &hexrays_fixed_access_vec,
+            index: usize,
+        ) -> hexrays_fixed_access_t;
 
         unsafe fn idalib_hexrays_cfunc_lvar_info(
             f: *mut cfunc_t,
@@ -947,8 +980,10 @@ mod ffix {
         ) -> bool;
 
         unsafe fn idalib_parse_decls_file(path: &str) -> i32;
+        unsafe fn idalib_parse_decls_file_with_clang(path: &str, argv: &str) -> i32;
         unsafe fn idalib_named_type_exists(name: &str) -> bool;
         unsafe fn idalib_save_database_with_backup() -> bool;
+        unsafe fn idalib_force_name(ea: u64, name: &str) -> bool;
 
         unsafe fn idalib_inf_get_version() -> u16;
         unsafe fn idalib_inf_get_genflags() -> u16;
@@ -1380,6 +1415,7 @@ pub mod name {
         get_nlist_ea, get_nlist_idx, get_nlist_name, get_nlist_size, is_in_nlist, is_public_name,
         is_weak_name,
     };
+    pub use super::ffix::idalib_force_name;
 }
 
 pub mod ida {

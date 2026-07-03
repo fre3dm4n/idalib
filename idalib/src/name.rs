@@ -14,6 +14,10 @@ use crate::idb::IDB;
 
 pub type NameIndex = usize;
 
+pub fn force_name(address: Address, name: &str) -> bool {
+    unsafe { crate::ffi::name::idalib_force_name(address, name) }
+}
+
 pub struct NameList<'a> {
     _marker: PhantomData<&'a IDB>,
 }
@@ -66,7 +70,9 @@ impl<'a> NameList<'a> {
             return None;
         }
 
-        let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+        let name = unsafe { CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned();
 
         let mut properties = NameProperties::empty();
 
